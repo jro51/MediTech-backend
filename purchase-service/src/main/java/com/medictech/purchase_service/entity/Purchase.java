@@ -39,4 +39,10 @@ public class Purchase {
 
     @Column(nullable = false)
     private LocalDateTime purchaseDate;
+
+    // Estado del pedido (reserva y recojo en tienda)
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 20)
+    @Builder.Default
+    private OrderStatus status = OrderStatus.RESERVED;
 }

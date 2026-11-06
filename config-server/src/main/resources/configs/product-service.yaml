@@ -2,9 +2,6 @@ spring:
   application:
     name: product-service
 
-server:
-  port: 8082
-
   datasource:
     url: jdbc:mysql://product-db:3306/product_db?allowPublicKeyRetrieval=true&useSSL=false
     username: ${DB_USER:root}
@@ -17,11 +14,14 @@ server:
     show-sql: false
     database-platform: org.hibernate.dialect.MySQL8Dialect
 
-  # Kafka — este servicio publica eventos cuando se crea/actualiza un producto
-  kafka:
-    bootstrap-servers: kafka:9092
-    producer:
-      key-serializer: org.apache.kafka.common.serialization.StringSerializer
-      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
-      properties:
-        spring.json.add.type.headers: false
+  # product-service no publica eventos en Kafka: purchase-service es el productor.
+
+server:
+  port: 8082
+
+eureka:
+  instance:
+    prefer-ip-address: true
+  client:
+    service-url:
+      defaultZone: http://eureka-server:8761/eureka/

@@ -1,5 +1,6 @@
 package com.medictech.purchase_service.dto;
 
+import com.medictech.purchase_service.entity.OrderStatus;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -18,6 +19,7 @@ public class PurchaseResponse {
     private List<PurchaseItemResponse> products;
     private Double total;
     private LocalDateTime purchaseDate;
+    private OrderStatus status;
 
     @Data
     @Builder

@@ -1,5 +1,6 @@
 package com.medictech.product_service.service;
 
+import com.medictech.product_service.dto.InventoryAlertsResponse;
 import com.medictech.product_service.dto.ProductRequest;
 import com.medictech.product_service.dto.ProductResponse;
 
@@ -23,4 +24,10 @@ public interface ProductService {
 
     // Reduce el stock cuando se confirma una compra
     void reduceStock(Long productId, Integer quantity);
+
+    // Devuelve el stock cuando se cancela una reserva
+    void restoreStock(Long productId, Integer quantity);
+
+    // Alertas de inventario: stock bajo y productos vencidos o por vencer
+    InventoryAlertsResponse findAlerts(int days);
 }

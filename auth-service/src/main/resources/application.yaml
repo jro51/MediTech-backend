@@ -29,7 +29,7 @@ eureka:
       defaultZone: http://eureka-server:8761/eureka/
 
 jwt:
-  secret: meditech-super-secret-key-must-be-at-least-256-bits-long
+  secret: ${JWT_SECRET:meditech-super-secret-key-must-be-at-least-256-bits-long}
   expiration: 86400000
 
 server:

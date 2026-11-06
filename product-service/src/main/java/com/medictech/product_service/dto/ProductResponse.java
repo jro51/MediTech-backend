@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -16,5 +18,7 @@ public class ProductResponse {
     private Integer stock;
     private String description;
     private String imageSrc;
-    private String iaRecommendation;
+    private LocalDate expirationDate;
+    private Integer minStock;
+    private Boolean requiresPrescription;
 }
