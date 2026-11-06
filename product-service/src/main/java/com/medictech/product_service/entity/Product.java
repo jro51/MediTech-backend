@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
+
 @Entity
 @Table(name = "products")
 @Data
@@ -33,7 +35,17 @@ public class Product {
     @Column(name = "image_src")
     private String imageSrc;
 
-    @Column(name = "ia_recommendation", columnDefinition = "TEXT")
+    // Fecha de vencimiento (opcional). Permite alertar productos por vencer.
+    @Column(name = "expiration_date")
+    private LocalDate expirationDate;
+
+    // Cuando el stock llega a este valor (o menos) se genera una alerta de stock bajo.
+    @Column(name = "min_stock", nullable = false)
     @Builder.Default
-    private String iaRecommendation = "Análisis de IA en curso...";
+    private Integer minStock = 5;
+
+    // Medicamentos que solo se entregan con receta médica.
+    @Column(name = "requires_prescription", nullable = false)
+    @Builder.Default
+    private Boolean requiresPrescription = false;
 }

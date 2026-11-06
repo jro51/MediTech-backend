@@ -1,5 +1,6 @@
 package com.medictech.product_service.service;
 
+import com.medictech.product_service.dto.InventoryAlertsResponse;
 import com.medictech.product_service.dto.ProductRequest;
 import com.medictech.product_service.dto.ProductResponse;
 import com.medictech.product_service.entity.Product;
@@ -10,12 +11,17 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class ProductServiceImpl implements ProductService{
+public class ProductServiceImpl implements ProductService {
+
+    private static final int DEFAULT_MIN_STOCK = 5;
+    private static final int MAX_ALERT_DAYS = 365;
+
     private final ProductRepository productRepository;
 
     @Override
@@ -48,6 +54,9 @@ public class ProductServiceImpl implements ProductService{
                 .stock(request.getStock())
                 .description(request.getDescription())
                 .imageSrc(request.getImageSrc())
+                .expirationDate(request.getExpirationDate())
+                .minStock(request.getMinStock() != null ? request.getMinStock() : DEFAULT_MIN_STOCK)
+                .requiresPrescription(Boolean.TRUE.equals(request.getRequiresPrescription()))
                 .build();
 
         Product saved = productRepository.save(product);
@@ -68,6 +77,13 @@ public class ProductServiceImpl implements ProductService{
         product.setStock(request.getStock());
         product.setDescription(request.getDescription());
         product.setImageSrc(request.getImageSrc());
+        product.setExpirationDate(request.getExpirationDate());
+        if (request.getMinStock() != null) {
+            product.setMinStock(request.getMinStock());
+        }
+        if (request.getRequiresPrescription() != null) {
+            product.setRequiresPrescription(request.getRequiresPrescription());
+        }
 
         Product updated = productRepository.save(product);
         log.info("Producto actualizado con id: {}", updated.getId());
@@ -111,6 +127,49 @@ public class ProductServiceImpl implements ProductService{
         log.info("Stock reducido en {} unidades para producto id: {}", quantity, productId);
     }
 
+    @Override
+    @Transactional
+    public void restoreStock(Long productId, Integer quantity) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new ProductNotFoundException(productId));
+
+        product.setStock(product.getStock() + quantity);
+        productRepository.save(product);
+        log.info("Stock restaurado en {} unidades para producto id: {}", quantity, productId);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public InventoryAlertsResponse findAlerts(int days) {
+        if (days < 1 || days > MAX_ALERT_DAYS) {
+            throw new IllegalArgumentException(
+                    "El parámetro days debe estar entre 1 y " + MAX_ALERT_DAYS
+            );
+        }
+
+        LocalDate limit = LocalDate.now().plusDays(days);
+
+        List<ProductResponse> lowStock = productRepository.findLowStock()
+                .stream()
+                .map(this::toResponse)
+                .toList();
+
+        List<ProductResponse> expiringSoon = productRepository
+                .findByExpirationDateLessThanEqualOrderByExpirationDateAsc(limit)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+
+        log.info("Alertas de inventario: {} con stock bajo, {} vencidos o por vencer",
+                lowStock.size(), expiringSoon.size());
+
+        return InventoryAlertsResponse.builder()
+                .days(days)
+                .lowStock(lowStock)
+                .expiringSoon(expiringSoon)
+                .build();
+    }
+
     // Metodo privado que convierte entidad a DTO de respuesta
     // Patrón Mapper manual — evita dependencias externas como MapStruct
     private ProductResponse toResponse(Product product) {
@@ -121,7 +180,9 @@ public class ProductServiceImpl implements ProductService{
                 .stock(product.getStock())
                 .description(product.getDescription())
                 .imageSrc(product.getImageSrc())
-                .iaRecommendation(product.getIaRecommendation())
+                .expirationDate(product.getExpirationDate())
+                .minStock(product.getMinStock())
+                .requiresPrescription(product.getRequiresPrescription())
                 .build();
     }
 }
