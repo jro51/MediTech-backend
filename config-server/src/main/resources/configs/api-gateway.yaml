@@ -25,8 +25,9 @@ spring:
           filters:
             - StripPrefix=1
 
+        # notification-service es Python y no se registra en Eureka: se enruta por URL directa
         - id: notification-service
-          uri: lb://notification-service
+          uri: ${NOTIFICATION_SERVICE_URL:http://notification-service:8084}
           predicates:
             - Path=/api/notifications/**
           filters:

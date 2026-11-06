@@ -6,6 +6,8 @@ import com.medictech.auth_service.dto.RegisterRequest;
 import com.medictech.auth_service.entity.User;
 import com.medictech.auth_service.repository.UserRepository;
 import com.medictech.auth_service.security.JwtUtils;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/auth")
+@Tag(name = "Autenticación", description = "Registro e inicio de sesión")
 @RequiredArgsConstructor
 public class AuthController {
 
@@ -21,6 +24,7 @@ public class AuthController {
     private final JwtUtils jwtUtils;
     private final BCryptPasswordEncoder passwordEncoder;
 
+    @Operation(summary = "Registrar usuario", description = "Crea un usuario con rol USER. El rol ADMIN se asigna directamente en la base de datos.")
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
 
@@ -47,6 +51,7 @@ public class AuthController {
                 .body("Usuario registrado correctamente");
     }
 
+    @Operation(summary = "Iniciar sesión", description = "Devuelve el JWT que se envía como Authorization: Bearer <token>.")
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginRequest request) {
 
