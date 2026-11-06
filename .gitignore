@@ -1,22 +1,26 @@
-# --- Java / Spring / IntelliJ ---
+# IDE
 .idea/
-target/
-*.class
-*.jar
-*.war
-.settings/
-.classpath
-.project
+*.iml
+.vscode/
 
-# --- Python ---
-venv/
-env/
+# Maven
+target/
+
+# Python
 __pycache__/
 *.pyc
+venv/
+.venv/
 .pytest_cache/
-.python-version
+.coverage
+htmlcov/
+*.db
 
+# Secretos y entorno
 .env
+.env.*
+!.env.example
 
+# SO
 .DS_Store
-*.log
+Thumbs.db

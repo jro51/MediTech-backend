@@ -1,606 +1,237 @@
+# MediTech — Reservas y control de inventario para boticas
+
+![CI/CD](https://github.com/jro51/MediTech-backend/actions/workflows/ci.yml/badge.svg)
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2.4-6DB33F?logo=springboot&logoColor=white)
-![Spring Cloud](https://img.shields.io/badge/Spring_Cloud-2023.0.0-6DB33F?logo=spring&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-3.2-6DB33F?logo=springboot&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
-![MySQL](https://img.shields.io/badge/Database-MySQL_8.0-4479A1?logo=mysql&logoColor=white)
-![Kafka](https://img.shields.io/badge/Messaging-Apache_Kafka-231F20?logo=apachekafka&logoColor=white)
-![Docker](https://img.shields.io/badge/Container-Docker-2496ED?logo=docker&logoColor=white)
-![Claude AI](https://img.shields.io/badge/AI-Claude_Anthropic-7C3AED?logo=anthropic&logoColor=white)
+![Kafka](https://img.shields.io/badge/Apache_Kafka-231F20?logo=apachekafka&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-# MediTech — Plataforma de E-commerce de Medicamentos
+Backend de microservicios para una **botica pequeña**: los clientes **reservan** medicamentos desde
+el catálogo y **pasan a recogerlos**, y la botica controla su **inventario** con alertas automáticas de
+**stock bajo** y de **productos vencidos o por vencer**.
 
-> Plataforma de comercio electrónico de medicamentos construida con arquitectura de microservicios. Integra comunicación síncrona (OpenFeign), mensajería asíncrona (Apache Kafka) y un servicio de recomendaciones médicas generadas por Inteligencia Artificial (Claude de Anthropic).
-
----
-
-## Descripción
-
-**MediTech** es un sistema distribuido que permite a usuarios registrarse, explorar un catálogo de medicamentos, realizar compras y recibir recomendaciones médicas personalizadas generadas por IA después de cada compra.
-
-El proyecto fue diseñado siguiendo principios de arquitectura limpia: cada microservicio es autónomo, tiene su propia base de datos, se comunica a través de interfaces bien definidas y puede desplegarse de forma independiente.
-
-> Este repositorio contiene el **backend**. El cliente en React vive en un repositorio separado: **[MediTech-Frontend](https://github.com/jro51/MediTech-Frontend)**.
+> El cliente web (React) vive en [MediTech-Frontend](https://github.com/jro51/MediTech-Frontend).
 
 ---
 
-## Arquitectura del Sistema
+## ¿Qué problema resuelve?
 
-```
-React Frontend (5173)
-        │
-        ▼
-  API Gateway (8080)
-  JWT · Rate Limiting · CORS · Enrutamiento
-        │
-  ┌─────┼──────────────────────────────────┐
-  │     │                                  │
-  ▼     ▼                                  ▼
-auth  product                           purchase
-(8081) (8082)                           (8083)
-  │     │                                  │
-  ▼     ▼                          Kafka (9092)
-auth  product                             │
- _db   _db                                ▼
-                                  notification-service
-                                     Python (8084)
-                                          │
-                                   Claude Anthropic API (Por ahora gratis)
-                                          │
-                                   notification_db
-                                       (3310)
+Muchas boticas pequeñas llevan el stock a mano: se enteran de que un producto se agotó cuando el cliente
+ya lo pidió, y de que otro venció cuando lo encuentran en el estante. MediTech busca resolver eso:
 
-Eureka Server (8761) ← todos los servicios se registran aquí
-Config Server (8888) ← todos los servicios leen su configuración aquí
+| Problema | Cómo lo resuelve |
+|---|---|
+| Se agota un producto sin que nadie lo note | Alerta de **stock bajo** cuando `stock ≤ stock mínimo` |
+| Productos vencidos en el estante | Alerta de **vencidos / por vencer** (ventana de 30 días configurable) |
+| El cliente va a la botica y ya no hay stock | **Reserva** desde el catálogo: el stock se descuenta al reservar |
+| La botica no sabe qué pedidos preparar | Panel con pedidos y su **estado**: reservado → listo → recogido |
+| El cliente no sabe cuándo ir | Notificación cuando el pedido está **listo para recoger** |
+| Medicamentos que requieren receta | Cada producto indica si **requiere receta** |
+
+> Es un proyecto de portafolio: está pensado a partir de un problema real, pero todavía no se validó con una botica real.
+
+---
+
+## Arquitectura
+
+```mermaid
+flowchart LR
+    Web[Frontend React] --> GW[API Gateway :8080<br/>JWT · CORS]
+    GW --> AUTH[auth-service]
+    GW --> PROD[product-service]
+    GW --> PUR[purchase-service]
+    GW --> NOTI[notification-service<br/>Python · FastAPI]
+    PUR -- OpenFeign: stock --> PROD
+    PUR -- evento de pedido --> K[(Kafka)]
+    K --> NOTI
+    NOTI -- cada 5 min: alertas --> PROD
+    AUTH --- DB1[(MySQL)]
+    PROD --- DB2[(MySQL)]
+    PUR --- DB3[(MySQL)]
+    NOTI --- DB4[(MySQL)]
+    CFG[Config Server] -.-> GW & AUTH & PROD & PUR
+    EU[Eureka] -.-> GW & AUTH & PROD & PUR
 ```
 
----
-
-## Resumen Técnico
-
-| Componente | Tecnología | Puerto |
+| Servicio | Tecnología | Responsabilidad |
 |---|---|---|
-| **Config Server** | Spring Cloud Config | 8888 |
-| **Eureka Server** | Spring Cloud Netflix Eureka | 8761 |
-| **API Gateway** | Spring Cloud Gateway + JWT | 8080 |
-| **Auth Service** | Spring Boot + Spring Security + BCrypt | 8081 |
-| **Product Service** | Spring Boot + JPA | 8082 |
-| **Purchase Service** | Spring Boot + OpenFeign + Kafka | 8083 |
-| **Notification Service** | Python + FastAPI + Kafka + Claude AI | 8084 |
-| **Bases de datos** | MySQL 8.0 (una por servicio) | 3307–3310 |
-| **Mensajería** | Apache Kafka + Zookeeper | 9092 / 2181 |
+| **api-gateway** | Spring Cloud Gateway | Único punto de entrada: valida el JWT, inyecta la identidad y oculta los endpoints internos |
+| **auth-service** | Spring Boot, Spring Security, BCrypt, JWT | Registro y login |
+| **product-service** | Spring Boot, JPA | Catálogo, stock, vencimientos, receta y **alertas de inventario** |
+| **purchase-service** | Spring Boot, OpenFeign, Kafka | **Reservas** y ciclo de vida del pedido; publica eventos |
+| **notification-service** | Python, FastAPI, Kafka, SQLAlchemy | Avisos a clientes y bandeja de alertas de la botica |
+| **config-server / eureka-server** | Spring Cloud | Configuración centralizada y descubrimiento de servicios |
 
-### Patrones y prácticas aplicadas
+### Ciclo de vida de un pedido
 
-- **Database per Service** — cada microservicio tiene su propia base de datos aislada
-- **API Gateway Pattern** — punto de entrada único con validación JWT centralizada
-- **Service Discovery** — Eureka registra y resuelve los servicios dinámicamente
-- **Centralized Configuration** — Config Server distribuye la configuración a todos los servicios
-- **Event-Driven Architecture** — Kafka desacopla la compra de la notificación
-- **Synchronous Communication** — OpenFeign para llamadas entre purchase-service y product-service
-- **Polyglot Architecture** — Java (Spring Boot) para servicios de negocio, Python (FastAPI) para el servicio de IA
-- **Clean Architecture** — separación en capas: controller → service (interfaz + implementación) → repository
-- **DTO Pattern** — nunca se exponen entidades directamente en los endpoints
+```mermaid
+stateDiagram-v2
+    [*] --> RESERVED: el cliente reserva (stock −1)
+    RESERVED --> READY: la botica lo prepara
+    READY --> PICKED_UP: el cliente lo recoge
+    RESERVED --> CANCELLED: cancelar (stock +1)
+    READY --> CANCELLED: cancelar (stock +1)
+    PICKED_UP --> [*]
+    CANCELLED --> [*]
+```
+
+Cada cambio de estado publica un evento en Kafka; `notification-service` lo convierte en un aviso para el cliente
+y, cuando entra una reserva nueva, en un aviso para la botica.
 
 ---
 
-## Estructura del Proyecto
+## Cómo ejecutarlo (un solo comando)
 
+Requisitos: **Docker** con Docker Compose. No necesitas Java, Maven ni Python instalados.
+
+```bash
+git clone https://github.com/jro51/MediTech-backend.git
+cd MediTech-backend
+docker compose up --build
 ```
-MediTech/
-├── docker-compose.yaml              ← levanta toda la infraestructura
-├── .gitignore
-│
-├── config-server/                   ← configuración centralizada (Puerto 8888)
-│   └── src/main/resources/
-│       ├── application.yaml
-│       └── configs/
-│           ├── api-gateway.yaml
-│           ├── auth-service.yaml
-│           ├── product-service.yaml
-│           ├── purchase-service.yaml
-│           └── notification-service.yaml
-│
-├── eureka-server/                   ← service discovery (Puerto 8761)
-│
-├── api-gateway/                     ← puerta de entrada + JWT (Puerto 8080)
-│   └── src/main/java/
-│       ├── config/SecurityConfig.java
-│       └── filter/JwtAuthenticationFilter.java
-│
-├── auth-service/                    ← registro y login (Puerto 8081)
-│   └── src/main/java/
-│       ├── controller/AuthController.java
-│       ├── dto/
-│       ├── entity/User.java
-│       ├── repository/UserRepository.java
-│       └── security/
-│           ├── JwtUtils.java
-│           └── SecurityConfig.java
-│
-├── product-service/                 ← catálogo y stock (Puerto 8082)
-│   └── src/main/java/
-│       ├── controller/ProductController.java
-│       ├── dto/
-│       ├── entity/Product.java
-│       ├── exception/
-│       ├── repository/ProductRepository.java
-│       └── service/
-│           ├── ProductService.java
-│           └── ProductServiceImpl.java
-│
-├── purchase-service/                ← compras + Kafka producer (Puerto 8083)
-│   └── src/main/java/
-│       ├── client/ProductClient.java        ← Feign client
-│       ├── controller/PurchaseController.java
-│       ├── dto/
-│       ├── entity/Purchase.java
-│       ├── exception/
-│       ├── messaging/PurchaseEventPublisher.java
-│       ├── repository/PurchaseRepository.java
-│       └── service/
-│           ├── PurchaseService.java
-│           └── PurchaseServiceImpl.java
-│
-└── notification-service/            ← IA + Kafka consumer (Puerto 8084)
-    ├── main.py                      ← FastAPI app
-    ├── consumer.py                  ← Kafka consumer thread
-    ├── ai_service.py                ← Claude Anthropic API
-    ├── database.py                  ← SQLAlchemy config
-    ├── models.py                    ← Notification model
-    ├── requirements.txt
-    └── Dockerfile
+
+La primera vez tarda varios minutos (compila los 6 servicios Java dentro de Docker). Para incluir también el frontend:
+
+```bash
+docker compose --profile frontend up --build     # web en http://localhost:5173
+```
+
+> Si vienes de una versión anterior, recrea los volúmenes porque cambió el esquema de las tablas:
+> `docker compose down -v`
+
+### Primer uso
+
+1. Regístrate: `POST http://localhost:8080/api/auth/register`
+2. Para tener un usuario **ADMIN** (botica), cambia el rol directamente en la base de datos:
+   ```bash
+   docker compose exec auth-db mysql -uroot -proot auth_db \
+     -e "UPDATE users SET role='ADMIN' WHERE email='tu@correo.com';"
+   ```
+3. Vuelve a hacer login para obtener un token con el rol actualizado.
+
+---
+
+## Documentación de la API (Swagger)
+
+Cada servicio expone su propia documentación interactiva (publicada solo en `localhost`):
+
+| Servicio | Swagger |
+|---|---|
+| auth-service | http://localhost:8081/swagger-ui.html |
+| product-service | http://localhost:8082/swagger-ui.html |
+| purchase-service | http://localhost:8083/swagger-ui.html |
+| notification-service | http://localhost:8084/docs |
+
+Al abrir un Swagger directamente (sin pasar por el gateway), los headers `X-User-Role` y `X-User-Id` aparecen
+como parámetros: escribe `ADMIN` o un id de usuario para probar los endpoints protegidos.
+
+### Endpoints principales (a través del gateway, `http://localhost:8080`)
+
+| Método | Ruta | Acceso | Descripción |
+|---|---|---|---|
+| POST | `/api/auth/register`, `/api/auth/login` | Público | Registro e inicio de sesión |
+| GET | `/api/products` · `/api/products/{id}` | Público | Catálogo |
+| POST · PUT · DELETE | `/api/products[/{id}]` | ADMIN | Gestión de productos |
+| GET | `/api/products/alerts?days=30` | ADMIN | Stock bajo y productos vencidos o por vencer |
+| POST | `/api/purchases/buy` | Usuario | Reservar productos |
+| GET | `/api/purchases/user/{userId}` | Dueño | Historial del usuario |
+| GET | `/api/purchases?status=READY` | ADMIN | Todos los pedidos (filtro opcional por estado) |
+| PUT | `/api/purchases/{id}/status?value=READY` | ADMIN | Avanzar o cancelar un pedido |
+| GET | `/api/notifications/{userId}` | Dueño | Avisos del cliente |
+| GET | `/api/notifications/admin/inbox` | ADMIN | Bandeja de la botica: reservas nuevas y alertas |
+
+Ejemplo de producto con los campos de botica:
+
+```json
+POST /api/products   (ADMIN)
+{
+  "name": "Amoxicilina 500mg",
+  "price": 18.50,
+  "stock": 40,
+  "minStock": 10,
+  "expirationDate": "2027-03-31",
+  "requiresPrescription": true
+}
 ```
 
 ---
 
-## Requisitos Previos
+## Pruebas y cobertura
 
-Antes de ejecutar el proyecto asegúrate de tener instalado:
-
-- **Java 17+** (se recomienda Amazon Corretto 17)
-- **Maven 3.9+**
-- **Python 3.12+**
-- **Docker Desktop** (con Docker Compose incluido)
-- **Git**
-
----
-
-## Configuración Inicial
-
-### 1. Clonar el repositorio
+Las pruebas son rápidas: no necesitan base de datos ni Kafka (usan Mockito y MockMvc en modo *standalone*).
 
 ```bash
-git clone https://github.com/<tu-usuario>/MediTech-pry.git
-cd MediTech-pry
-```
+# Java (desde la carpeta de cada servicio)
+cd product-service && ./mvnw verify          # reporte: target/site/jacoco/index.html
 
-### 2. Configurar la API Key de Anthropic
-
-El `notification-service` necesita una API Key de Anthropic para generar recomendaciones con IA.
-
-Regístrate gratis en [console.anthropic.com](https://console.anthropic.com) y crea una API Key. Luego crea el archivo `.env` en la carpeta `notification-service/`:
-
-```bash
-# notification-service/.env
-DB_HOST=localhost
-DB_PORT=3310
-DB_NAME=notification_db
-DB_USER=root
-DB_PASSWORD=root
-
-KAFKA_BOOTSTRAP_SERVERS=localhost:9092
-KAFKA_TOPIC=purchase-events
-KAFKA_GROUP_ID=notification-group
-
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxx
-
-HOST=0.0.0.0
-PORT=8084
-```
-
-> El archivo `.env` está incluido en `.gitignore` y nunca debe subirse al repositorio.
-
-### 3. Preparar el entorno virtual de Python
-
-```bash
+# Python
 cd notification-service
-
-# Crear entorno virtual
-python -m venv venv
-
-# Activar (Windows)
-venv\Scripts\activate
-
-# Activar (Mac/Linux)
-source venv/bin/activate
-
-# Instalar dependencias
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
+pytest --cov=. --cov-report=term-missing
 ```
+
+| Servicio | Qué se prueba |
+|---|---|
+| product-service | Reglas de stock, alertas, validaciones, permisos por rol, manejo de errores |
+| purchase-service | Creación de reservas, transiciones de estado, restauración de stock al cancelar, publicación a Kafka **solo después del commit** |
+| auth-service | Registro, login, emisión y validación del JWT |
+| api-gateway | Rutas públicas/protegidas, token falso o vencido, **suplantación de headers**, endpoints internos ocultos |
+| notification-service | Reglas de mensajes, consumo de eventos con deduplicación, alertas diarias, API |
+
+`product-service` y `purchase-service` exigen **al menos 70% de cobertura de líneas** (JaCoCo) en `mvn verify`.
+El notification-service exige 85% en CI.
 
 ---
 
-## Cómo Ejecutar el Proyecto
+## CI/CD (GitHub Actions)
 
-El proyecto tiene dos modos de ejecución: **desarrollo** (servicios Java en IntelliJ + Docker para infraestructura) y **completo con Docker** (todo en contenedores).
+`.github/workflows/ci.yml`:
 
----
-
-### Modo Desarrollo (recomendado para desarrollo activo)
-
-#### Paso 1 — Levantar la infraestructura con Docker
-
-```bash
-# Desde la raíz del proyecto
-docker-compose up -d auth-db product-db purchase-db notification-db zookeeper kafka
-```
-
-Verifica que los contenedores estén corriendo:
-
-```bash
-docker ps
-```
-
-Debes ver 6 contenedores activos: las 4 bases de datos, zookeeper y kafka.
-
-#### Paso 2 — Compilar todos los servicios Java
-
-Antes de correr cualquier servicio, compila todos los módulos desde IntelliJ o desde la terminal:
-
-```bash
-# Desde cada carpeta de servicio Java
-cd config-server && mvn clean package -DskipTests && cd ..
-cd eureka-server && mvn clean package -DskipTests && cd ..
-cd auth-service && mvn clean package -DskipTests && cd ..
-cd product-service && mvn clean package -DskipTests && cd ..
-cd purchase-service && mvn clean package -DskipTests && cd ..
-cd api-gateway && mvn clean package -DskipTests && cd ..
-```
-
-#### Paso 3 — Arrancar los servicios Java en orden
-
-Abre IntelliJ y arranca cada servicio esperando que el anterior esté completamente iniciado (verás `Started XxxApplication` en los logs):
-
-```
-1. ConfigServerApplication     → Puerto 8888
-2. EurekaServerApplication      → Puerto 8761
-3. AuthServiceApplication       → Puerto 8081
-4. ProductServiceApplication    → Puerto 8082
-5. PurchaseServiceApplication   → Puerto 8083
-6. ApiGatewayApplication        → Puerto 8080 (último)
-```
-
-> El orden es obligatorio. El Config Server debe estar listo antes que cualquier otro servicio, y el API Gateway debe arrancar al final.
-
-#### Paso 4 — Arrancar el notification-service Python
-
-```bash
-cd notification-service
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # Mac/Linux
-
-python -m uvicorn main:app --host 0.0.0.0 --port 8084 --reload
-```
-
-Verifica que el servicio esté activo:
-```
-http://localhost:8084/health
-→ {"status": "UP", "service": "notification-service"}
-```
-
-#### Paso 5 — Verificar Eureka
-
-Abre el dashboard de Eureka en el navegador:
-
-```
-http://localhost:8761
-```
-
-Debes ver todos los servicios registrados en verde:
-
-```
-AUTH-SERVICE         UP (1) - localhost:auth-service:8081
-PRODUCT-SERVICE      UP (1) - localhost:product-service:8082
-PURCHASE-SERVICE     UP (1) - localhost:purchase-service:8083
-API-GATEWAY          UP (1) - localhost:api-gateway:8080
-```
+1. **java-tests**: un job por servicio (en paralelo) con `mvn verify`, resumen de cobertura y reporte JaCoCo como artefacto.
+2. **python-tests**: `pytest` con cobertura mínima.
+3. **docker-build**: valida `docker-compose` y construye todas las imágenes (los Dockerfiles compilan dentro de Docker).
+4. **publish-images**: en cada push a `master`, publica las imágenes en **GitHub Container Registry** (`ghcr.io`).
 
 ---
 
-### Modo Docker Completo
+## Decisiones técnicas
 
-Para levantar todo el sistema con un solo comando (requiere compilar los JAR primero):
+- **Reserva y recojo en lugar de e-commerce con envío:** coincide con cómo operan las boticas pequeñas y justifica el flujo de estados.
+- **Mensajes por reglas, sin IA:** en un dominio de salud no se quiere texto generado sin revisión profesional. Las notificaciones son deterministas, verificables y no requieren claves de API para ejecutar el proyecto.
+- **Kafka solo después del commit:** el evento se publica en `afterCommit`, para no avisar de pedidos que la base de datos terminó descartando.
+- **Deduplicación en el consumidor:** Kafka puede reentregar un mensaje; cada notificación tiene una `dedupe_key` única.
+- **Alertas por consulta periódica:** `notification-service` pregunta a `product-service` cada 5 minutos. Genera como máximo un aviso por producto y por día. Es más simple que publicar eventos de inventario; ver mejoras futuras.
+- **Seguridad en el gateway:** valida el JWT, **descarta los headers de identidad enviados por el cliente** y bloquea desde el exterior los endpoints internos (`reduce-stock`, `restore-stock`, `check-stock`).
+- **Database per Service:** cada servicio con su propia base de datos.
+- **Dockerfiles multi-etapa, sin root, con puertos internos publicados solo en `127.0.0.1`.**
 
-```bash
-# 1. Compilar todos los JAR
-cd config-server && mvn clean package -DskipTests && cd ..
-cd eureka-server && mvn clean package -DskipTests && cd ..
-cd auth-service && mvn clean package -DskipTests && cd ..
-cd product-service && mvn clean package -DskipTests && cd ..
-cd purchase-service && mvn clean package -DskipTests && cd ..
-cd api-gateway && mvn clean package -DskipTests && cd ..
+## Limitaciones conocidas
 
-# 2. Levantar todo con Docker Compose (incluye el notification-service Python)
-docker-compose up -d
-```
+- Cada producto tiene **una sola fecha de vencimiento**; un modelo real manejaría **lotes** (varias fechas por producto, salida por FEFO).
+- Los servicios internos confían en los headers `X-User-*` que inyecta el gateway: por eso solo el gateway debe ser accesible desde fuera.
+- Las contraseñas de MySQL (`root/root`) y el `JWT_SECRET` por defecto son **solo para desarrollo**; define `JWT_SECRET` en el entorno.
+- Las tablas se crean con `ddl-auto: update` (sin migraciones Flyway/Liquibase).
+- No hay despliegue en la nube (son ~14 contenedores); la demo se levanta con Docker Compose.
 
-Para detener todos los contenedores:
+## Mejoras futuras
 
-```bash
-docker-compose down
-```
-
-Para detener y eliminar los volúmenes (borra las bases de datos):
-
-```bash
-docker-compose down -v
-```
-
----
-
-## Endpoints de la API
-
-Todos los endpoints pasan por el **API Gateway** en `http://localhost:8080`.
-
-### Autenticación
-
-| Método | Endpoint | Descripción | Auth |
-|--------|----------|-------------|------|
-| `POST` | `/api/auth/register` | Registrar nuevo usuario | Pública |
-| `POST` | `/api/auth/login` | Iniciar sesión, devuelve JWT | Pública |
-
-**Ejemplo — Registro:**
-```json
-POST /api/auth/register
-{
-  "name": "Juan Pérez",
-  "phone": "999888777",
-  "email": "juan@meditech.com",
-  "password": "123456"
-}
-```
-
-**Ejemplo — Login:**
-```json
-POST /api/auth/login
-{
-  "email": "juan@meditech.com",
-  "password": "123456"
-}
-
-// Respuesta:
-{
-  "token": "eyJhbGciOiJIUzI1NiJ9...",
-  "id": 1,
-  "name": "Juan Pérez",
-  "email": "juan@meditech.com",
-  "role": "USER"
-}
-```
+- [ ] Lotes de productos y salida por FEFO
+- [ ] Circuit Breaker (Resilience4j) entre `purchase-service` y `product-service`
+- [ ] Eventos de inventario en Kafka en lugar de consulta periódica
+- [ ] Notificaciones por correo o WhatsApp (modo sandbox)
+- [ ] Migraciones con Flyway y pruebas de integración con Testcontainers
+- [ ] Trazabilidad distribuida con Zipkin
 
 ---
 
-### Productos
-
-| Método | Endpoint | Descripción | Auth |
-|--------|----------|-------------|------|
-| `GET` | `/api/products` | Listar todos los productos | Pública |
-| `GET` | `/api/products/{id}` | Ver producto por ID | Pública |
-| `POST` | `/api/products` | Crear producto | ADMIN |
-| `PUT` | `/api/products/{id}` | Actualizar producto | ADMIN |
-| `DELETE` | `/api/products/{id}` | Eliminar producto | ADMIN |
-
-**Ejemplo — Crear producto (requiere rol ADMIN):**
-```json
-POST /api/products
-Authorization: Bearer <token>
-
-{
-  "name": "Ibuprofeno 400mg",
-  "price": 12.50,
-  "stock": 100,
-  "description": "Antiinflamatorio no esteroideo para dolor y fiebre",
-  "imageSrc": "https://example.com/ibuprofeno.jpg"
-}
-```
-
-> Para asignar rol ADMIN, actualiza directamente en la base de datos:
-> ```sql
-> UPDATE users SET role = 'ADMIN' WHERE email = 'juan@meditech.com';
-> ```
-> Luego vuelve a hacer login para obtener un token con el rol actualizado.
-
----
-
-### Compras
-
-| Método | Endpoint | Descripción | Auth |
-|--------|----------|-------------|------|
-| `POST` | `/api/purchases/buy` | Realizar una compra | JWT requerido |
-| `GET` | `/api/purchases/user/{userId}` | Ver historial de compras | JWT requerido |
-| `DELETE` | `/api/purchases/{id}` | Eliminar compra | JWT requerido |
-
-**Ejemplo — Realizar compra:**
-```json
-POST /api/purchases/buy
-Authorization: Bearer <token>
-
-{
-  "productIds": [1, 2]
-}
-
-// Respuesta:
-{
-  "id": 1,
-  "userId": 1,
-  "products": [
-    { "productId": 1, "productName": "Ibuprofeno 400mg", "price": 12.50 },
-    { "productId": 2, "productName": "Paracetamol 500mg", "price": 5.99 }
-  ],
-  "total": 18.49,
-  "purchaseDate": "2026-05-10T10:30:00"
-}
-```
-
----
-
-### Notificaciones con IA
-
-| Método | Endpoint | Descripción | Auth |
-|--------|----------|-------------|------|
-| `GET` | `/api/notifications/{userId}` | Ver recomendaciones del usuario | JWT requerido |
-
-**Ejemplo — Ver notificaciones:**
-```json
-GET /api/notifications/1
-Authorization: Bearer <token>
-
-// Respuesta (generada por Claude):
-[
-  {
-    "id": 1,
-    "userId": 1,
-    "message": "El Ibuprofeno 400mg y el Paracetamol 500mg pueden tomarse juntos con precaución. Tome ambos con alimentos para proteger el estómago y respete los intervalos de dosificación. Consulte a su médico si los síntomas persisten más de 3 días.",
-    "purchaseId": 1,
-    "createdAt": "2026-05-10T10:30:05"
-  }
-]
-```
-
----
-
-## Flujo Completo del Sistema
+## Estructura
 
 ```
-1. Usuario hace POST /api/purchases/buy + JWT
-        │
-        ▼
-2. API Gateway valida el JWT
-   Extrae userId, role, email del token
-   Agrega headers internos: X-User-Id, X-User-Role, X-User-Email
-        │
-        ▼
-3. purchase-service recibe la petición
-   Llama a product-service via OpenFeign para verificar stock
-   Reduce el stock de cada producto comprado
-   Guarda la compra en purchase_db
-        │
-        ▼
-4. purchase-service publica evento en Kafka
-   Topic: purchase-events
-   Payload: { purchaseId, userId, productNames, total, ... }
-        │
-        ▼
-5. notification-service Python consume el evento
-   Llama a Claude (Anthropic API) con los nombres de los medicamentos
-   Genera recomendación médica personalizada
-   Guarda la notificación en notification_db
-        │
-        ▼
-6. Usuario hace GET /api/notifications/1
-   Obtiene la recomendación generada por IA
+MediTech-backend/
+├── docker-compose.yaml
+├── .github/workflows/ci.yml
+├── api-gateway/          auth-service/        product-service/
+├── purchase-service/     config-server/       eureka-server/
+└── notification-service/   (Python)
 ```
-
----
-
-## Variables de Entorno
-
-### Servicios Java (application.yaml)
-
-Los servicios Java leen su configuración desde el Config Server. Las variables clave son:
-
-| Variable | Descripción | Valor por defecto |
-|----------|-------------|-------------------|
-| `JWT_SECRET` | Clave secreta para firmar los tokens | `meditech-super-secret-key-...` |
-| `DB_USER` | Usuario de MySQL | `root` |
-| `DB_PASSWORD` | Contraseña de MySQL | `root` |
-| `DB_HOST` | Host de la base de datos | `localhost` |
-
-### Notification Service Python (.env)
-
-| Variable | Descripción | Requerido |
-|----------|-------------|----|
-| `ANTHROPIC_API_KEY` | API Key de Anthropic para Claude | Sí |
-| `DB_HOST` | Host de notification_db | Sí |
-| `DB_PORT` | Puerto de notification_db | Sí |
-| `DB_NAME` | Nombre de la base de datos | Sí |
-| `DB_USER` | Usuario MySQL | Sí |
-| `DB_PASSWORD` | Contraseña MySQL | Sí |
-| `KAFKA_BOOTSTRAP_SERVERS` | Dirección del broker Kafka | Sí |
-| `KAFKA_TOPIC` | Topic que consume | `purchase-events` |
-| `KAFKA_GROUP_ID` | Grupo del consumer | `notification-group` |
-
----
-
-## Solución de Problemas Frecuentes
-
-### Los servicios no aparecen en Eureka
-Verifica que el Config Server esté corriendo antes de arrancar cualquier otro servicio. El `application.yaml` de cada servicio apunta al Config Server para obtener su configuración.
-
-### Error de conexión a MySQL al arrancar
-Asegúrate de que los contenedores de Docker estén corriendo antes de arrancar los servicios Java:
-```bash
-docker ps  # deben aparecer auth-db, product-db, purchase-db, notification-db
-```
-
-### El notification-service no recibe eventos de Kafka
-Verifica que Kafka esté corriendo y que el `purchase-service` tenga la dependencia `spring-kafka` en su `pom.xml`. Revisa los logs del `purchase-service` para confirmar que el evento se publicó.
-
-### Error `ModuleNotFoundError: No module named 'kafka.vendor.six.moves'`
-Este error ocurre con `kafka-python` en Python 3.12. Usa `kafka-python-ng` en su lugar:
-```bash
-pip uninstall kafka-python -y
-pip install kafka-python-ng==2.2.3
-```
-
-### El API Gateway devuelve 401 en rutas que deberían ser públicas
-El filtro JWT distingue entre GET y POST para `/api/products`. Los GET son públicos pero los POST (crear producto) requieren token ADMIN.
-
----
-
-## Contribuir
-
-Las contribuciones se gestionan mediante Pull Requests desde ramas propias contra `main`.
-
-### Crear una rama
-
-```bash
-git checkout main
-git pull
-git checkout -b <prefijo>/<descripcion-corta>
-```
-
-Convenciones de nombre de rama:
-
-| Tipo | Prefijo | Ejemplo |
-|------|---------|---------|
-| Nueva funcionalidad | `feature/` | `feature/circuit-breaker` |
-| Corrección de bug | `fix/` | `fix/kafka-consumer-error` |
-| Refactor | `refactor/` | `refactor/purchase-service-layers` |
-| Documentación | `docs/` | `docs/update-readme` |
-
-### Subir cambios
-
-```bash
-git add .
-git commit -m "feat: descripción del cambio"
-git push origin <prefijo>/<descripcion-corta>
-```
-
-Abre el Pull Request en GitHub contra `main` con un título descriptivo.
-
----
-
-## Próximas Mejoras
-
-- [ ] **Circuit Breaker con Resilience4j** — respuesta de fallback cuando `product-service` no responde
-- [ ] **Bean Validation** — validaciones con `@NotNull`, `@NotBlank` en los DTOs
-- [ ] **Tests unitarios** — `@SpringBootTest` y `@WebMvcTest` para cada servicio
-- [ ] **Zipkin** — trazabilidad distribuida entre servicios
-
-> El frontend en React ya consume la API a través del API Gateway y el `notification-service` Python ya está integrado en `docker-compose.yaml`. El repositorio del frontend está en [MediTech-Frontend](https://github.com/jro51/MediTech-Frontend).
-
----
-
-> Proyecto desarrollado como demostración de arquitectura de microservicios con Spring Cloud, Apache Kafka e Inteligencia Artificial aplicada a un dominio real.
