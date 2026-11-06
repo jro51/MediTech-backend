@@ -19,4 +19,6 @@ public class PurchaseEvent {
     private List<Double> productPrices;
     private Double total;
     private LocalDateTime purchaseDate;
+    // Estado del pedido al momento del evento: RESERVED, READY, PICKED_UP o CANCELLED
+    private String status;
 }

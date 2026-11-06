@@ -21,4 +21,8 @@ public interface ProductClient {
     // Llama a PUT /products/{id}/reduce-stock
     @PutMapping("/products/{id}/reduce-stock")
     void reduceStock(@PathVariable Long id, @RequestParam Integer quantity);
+
+    // Llama a PUT /products/{id}/restore-stock (al cancelar una reserva)
+    @PutMapping("/products/{id}/restore-stock")
+    void restoreStock(@PathVariable Long id, @RequestParam Integer quantity);
 }
