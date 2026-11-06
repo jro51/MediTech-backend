@@ -4,10 +4,12 @@ import com.medictech.auth_service.dto.AuthResponse;
 import com.medictech.auth_service.dto.LoginRequest;
 import com.medictech.auth_service.dto.RegisterRequest;
 import com.medictech.auth_service.entity.User;
+import com.medictech.auth_service.exception.InvalidCredentialsException;
 import com.medictech.auth_service.repository.UserRepository;
 import com.medictech.auth_service.security.JwtUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,13 +28,11 @@ public class AuthController {
 
     @Operation(summary = "Registrar usuario", description = "Crea un usuario con rol USER. El rol ADMIN se asigna directamente en la base de datos.")
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
+    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {
 
         // Verifica si el email ya existe
         if (userRepository.existsByEmail(request.getEmail())) {
-            return ResponseEntity
-                    .badRequest()
-                    .body("El email ya está registrado");
+            throw new IllegalArgumentException("El email ya está registrado");
         }
 
         // Construye el usuario con el password encriptado
@@ -53,7 +53,7 @@ public class AuthController {
 
     @Operation(summary = "Iniciar sesión", description = "Devuelve el JWT que se envía como Authorization: Bearer <token>.")
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
 
         // Busca el usuario por email
         User user = userRepository.findByEmail(request.getEmail())
@@ -61,9 +61,7 @@ public class AuthController {
 
         // Verifica que exista y que el password coincida
         if (user == null || !passwordEncoder.matches(request.getPassword(), user.getPassword())) {
-            return ResponseEntity
-                    .status(HttpStatus.UNAUTHORIZED)
-                    .body("Credenciales incorrectas");
+            throw new InvalidCredentialsException("Credenciales incorrectas");
         }
 
         // Genera el token con email, role y userId

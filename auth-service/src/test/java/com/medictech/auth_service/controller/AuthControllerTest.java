@@ -4,6 +4,7 @@ import com.medictech.auth_service.dto.AuthResponse;
 import com.medictech.auth_service.dto.LoginRequest;
 import com.medictech.auth_service.dto.RegisterRequest;
 import com.medictech.auth_service.entity.User;
+import com.medictech.auth_service.exception.InvalidCredentialsException;
 import com.medictech.auth_service.repository.UserRepository;
 import com.medictech.auth_service.security.JwtUtils;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -87,12 +89,12 @@ class AuthControllerTest {
     }
 
     @Test
-    void register_withExistingEmail_returns400AndDoesNotSave() {
+    void register_withExistingEmail_throwsBadRequestAndDoesNotSave() {
         when(userRepository.existsByEmail("ana@botica.com")).thenReturn(true);
 
-        ResponseEntity<?> response = controller.register(registerRequest());
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        assertThatThrownBy(() -> controller.register(registerRequest()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("El email ya está registrado");
         verify(userRepository, never()).save(any());
     }
 
@@ -111,20 +113,20 @@ class AuthControllerTest {
     }
 
     @Test
-    void login_withWrongPassword_returns401() {
+    void login_withWrongPassword_throwsUnauthorized() {
         when(userRepository.findByEmail("ana@botica.com")).thenReturn(Optional.of(storedUser()));
 
-        ResponseEntity<?> response = controller.login(loginRequest("ana@botica.com", "incorrecta"));
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThatThrownBy(() -> controller.login(loginRequest("ana@botica.com", "incorrecta")))
+                .isInstanceOf(InvalidCredentialsException.class)
+                .hasMessage("Credenciales incorrectas");
     }
 
     @Test
-    void login_withUnknownEmail_returns401() {
+    void login_withUnknownEmail_throwsUnauthorized() {
         when(userRepository.findByEmail("nadie@botica.com")).thenReturn(Optional.empty());
 
-        ResponseEntity<?> response = controller.login(loginRequest("nadie@botica.com", "secreto123"));
-
-        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        assertThatThrownBy(() -> controller.login(loginRequest("nadie@botica.com", "secreto123")))
+                .isInstanceOf(InvalidCredentialsException.class)
+                .hasMessage("Credenciales incorrectas");
     }
 }

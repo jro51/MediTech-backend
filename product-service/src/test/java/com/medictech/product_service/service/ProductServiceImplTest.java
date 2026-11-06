@@ -182,18 +182,18 @@ class ProductServiceImplTest {
     }
 
     @Test
-    void reduceStock_subtractsQuantity() {
-        Product existing = product(1L, "A", 10);
-        when(productRepository.findById(1L)).thenReturn(Optional.of(existing));
+    void reduceStock_usesAnAtomicDecrement() {
+        when(productRepository.decreaseStock(1L, 4)).thenReturn(1);
 
         productService.reduceStock(1L, 4);
 
-        assertThat(existing.getStock()).isEqualTo(6);
-        verify(productRepository).save(existing);
+        verify(productRepository).decreaseStock(1L, 4);
+        verify(productRepository, never()).save(any());
     }
 
     @Test
     void reduceStock_withInsufficientStock_throwsAndDoesNotSave() {
+        when(productRepository.decreaseStock(1L, 3)).thenReturn(0);
         when(productRepository.findById(1L)).thenReturn(Optional.of(product(1L, "A", 2)));
 
         assertThatThrownBy(() -> productService.reduceStock(1L, 3))
@@ -204,6 +204,7 @@ class ProductServiceImplTest {
 
     @Test
     void reduceStock_whenMissing_throwsNotFound() {
+        when(productRepository.decreaseStock(1L, 1)).thenReturn(0);
         when(productRepository.findById(1L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> productService.reduceStock(1L, 1))
@@ -211,22 +212,42 @@ class ProductServiceImplTest {
     }
 
     @Test
-    void restoreStock_addsQuantityBack() {
-        Product existing = product(1L, "A", 10);
-        when(productRepository.findById(1L)).thenReturn(Optional.of(existing));
+    void reduceStock_withNonPositiveQuantity_throwsBeforeTouchingTheDatabase() {
+        assertThatThrownBy(() -> productService.reduceStock(1L, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mayor a cero");
+        assertThatThrownBy(() -> productService.reduceStock(1L, -2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mayor a cero");
+
+        verify(productRepository, never()).decreaseStock(any(), any());
+    }
+
+    @Test
+    void restoreStock_usesAnAtomicIncrement() {
+        when(productRepository.increaseStock(1L, 2)).thenReturn(1);
 
         productService.restoreStock(1L, 2);
 
-        assertThat(existing.getStock()).isEqualTo(12);
-        verify(productRepository).save(existing);
+        verify(productRepository).increaseStock(1L, 2);
+        verify(productRepository, never()).save(any());
     }
 
     @Test
     void restoreStock_whenMissing_throwsNotFound() {
-        when(productRepository.findById(1L)).thenReturn(Optional.empty());
+        when(productRepository.increaseStock(1L, 1)).thenReturn(0);
 
         assertThatThrownBy(() -> productService.restoreStock(1L, 1))
                 .isInstanceOf(ProductNotFoundException.class);
+    }
+
+    @Test
+    void restoreStock_withNonPositiveQuantity_throwsBeforeTouchingTheDatabase() {
+        assertThatThrownBy(() -> productService.restoreStock(1L, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("mayor a cero");
+
+        verify(productRepository, never()).increaseStock(any(), any());
     }
 
     @Test

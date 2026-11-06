@@ -29,6 +29,9 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -61,6 +64,16 @@ class PurchaseServiceImplTest {
     private void commit() {
         TransactionSynchronizationManager.getSynchronizations()
                 .forEach(TransactionSynchronization::afterCommit);
+    }
+
+    private void rollback() {
+        TransactionSynchronizationManager.getSynchronizations()
+                .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+    }
+
+    private void completeCommit() {
+        TransactionSynchronizationManager.getSynchronizations()
+                .forEach(sync -> sync.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
     }
 
     private ProductResponse product(Long id, String name, double price) {
@@ -131,6 +144,49 @@ class PurchaseServiceImplTest {
 
         verify(purchaseRepository, never()).save(any());
         verify(productClient, never()).reduceStock(any(), any());
+    }
+
+    @Test
+    void createPurchase_whenAStockReductionFails_restoresAlreadyReservedStock() {
+        when(productClient.findById(1L)).thenReturn(product(1L, "Ibuprofeno", 12.5));
+        when(productClient.findById(2L)).thenReturn(product(2L, "Paracetamol", 5.5));
+        when(productClient.checkStock(1L, 1)).thenReturn(true);
+        when(productClient.checkStock(2L, 1)).thenReturn(true);
+        when(purchaseRepository.save(any(Purchase.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        doAnswer(invocation -> {
+            Long productId = invocation.getArgument(0);
+            if (productId == 2L) {
+                throw new RuntimeException("product-service caído");
+            }
+            return null;
+        }).when(productClient).reduceStock(anyLong(), anyInt());
+
+        assertThatThrownBy(() -> service.createPurchase(request(7L, 1L, 2L)))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("caído");
+
+        // El primer producto ya se había descontado: se devuelve.
+        verify(productClient).restoreStock(1L, 1);
+        verify(productClient, never()).restoreStock(2L, 1);
+        verify(eventPublisher, never()).publishPurchaseCreated(any());
+    }
+
+    @Test
+    void createPurchase_whenTransactionRollsBack_restoresReservedStock() {
+        when(productClient.findById(1L)).thenReturn(product(1L, "Ibuprofeno", 12.5));
+        when(productClient.findById(2L)).thenReturn(product(2L, "Paracetamol", 5.5));
+        when(productClient.checkStock(1L, 1)).thenReturn(true);
+        when(productClient.checkStock(2L, 1)).thenReturn(true);
+        when(purchaseRepository.save(any(Purchase.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        service.createPurchase(request(7L, 1L, 2L));
+
+        verify(productClient, never()).restoreStock(any(), any());
+        rollback();
+
+        verify(productClient).restoreStock(1L, 1);
+        verify(productClient).restoreStock(2L, 1);
+        verify(eventPublisher, never()).publishPurchaseCreated(any());
     }
 
     @Test
@@ -221,6 +277,56 @@ class PurchaseServiceImplTest {
     }
 
     @Test
+    void updateStatus_cancelled_whenRestoreFails_undoesPartialRestore() {
+        Purchase existing = purchase(1L, OrderStatus.READY, List.of(1L, 2L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+        doAnswer(invocation -> {
+            Long productId = invocation.getArgument(0);
+            if (productId == 2L) {
+                throw new RuntimeException("product-service caído");
+            }
+            return null;
+        }).when(productClient).restoreStock(anyLong(), anyInt());
+
+        assertThatThrownBy(() -> service.updateStatus(1L, OrderStatus.CANCELLED))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("caído");
+
+        verify(productClient).restoreStock(1L, 1);
+        verify(productClient).reduceStock(1L, 1);
+        verify(purchaseRepository, never()).save(any());
+    }
+
+    @Test
+    void updateStatus_cancelled_whenTransactionRollsBack_reducesStockAgain() {
+        Purchase existing = purchase(1L, OrderStatus.READY, List.of(1L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(purchaseRepository.save(existing)).thenReturn(existing);
+        when(productClient.findById(1L)).thenReturn(product(1L, "Ibuprofeno", 12.5));
+
+        service.updateStatus(1L, OrderStatus.CANCELLED);
+
+        verify(productClient).restoreStock(1L, 1);
+        rollback();
+        verify(productClient).reduceStock(1L, 1);
+    }
+
+    @Test
+    void updateStatus_cancelled_whenSaveFails_reducesStockAgain() {
+        Purchase existing = purchase(1L, OrderStatus.READY, List.of(1L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+        when(purchaseRepository.save(existing)).thenThrow(new RuntimeException("db caída"));
+
+        assertThatThrownBy(() -> service.updateStatus(1L, OrderStatus.CANCELLED))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("db caída");
+
+        verify(productClient).restoreStock(1L, 1);
+        rollback();
+        verify(productClient).reduceStock(1L, 1);
+    }
+
+    @Test
     void updateStatus_withInvalidTransition_throwsAndDoesNotSave() {
         Purchase existing = purchase(1L, OrderStatus.PICKED_UP, List.of(1L));
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
@@ -244,13 +350,65 @@ class PurchaseServiceImplTest {
     // ---------- deletePurchase ----------
 
     @Test
-    void deletePurchase_removesExistingOrder() {
+    void deletePurchase_cancelled_removesOrderWithoutTouchingStock() {
         Purchase existing = purchase(1L, OrderStatus.CANCELLED, List.of(1L));
         when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
 
         service.deletePurchase(1L);
 
         verify(purchaseRepository).delete(existing);
+        verify(productClient, never()).restoreStock(any(), any());
+        verify(productClient, never()).reduceStock(any(), any());
+    }
+
+    @Test
+    void deletePurchase_reserved_restoresStockBeforeDeleting() {
+        Purchase existing = purchase(1L, OrderStatus.RESERVED, List.of(1L, 2L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+
+        service.deletePurchase(1L);
+
+        verify(productClient).restoreStock(1L, 1);
+        verify(productClient).restoreStock(2L, 1);
+        verify(purchaseRepository).delete(existing);
+        completeCommit();
+        verify(productClient, never()).reduceStock(any(), any());
+    }
+
+    @Test
+    void deletePurchase_ready_restoresStockBeforeDeleting() {
+        Purchase existing = purchase(1L, OrderStatus.READY, List.of(1L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+
+        service.deletePurchase(1L);
+
+        verify(productClient).restoreStock(1L, 1);
+        verify(purchaseRepository).delete(existing);
+    }
+
+    @Test
+    void deletePurchase_whenDeleteRollsBack_reducesStockAgain() {
+        Purchase existing = purchase(1L, OrderStatus.RESERVED, List.of(1L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+
+        service.deletePurchase(1L);
+        verify(productClient).restoreStock(1L, 1);
+
+        rollback();
+
+        verify(productClient).reduceStock(1L, 1);
+    }
+
+    @Test
+    void deletePurchase_pickedUp_removesOrderWithoutTouchingStock() {
+        Purchase existing = purchase(1L, OrderStatus.PICKED_UP, List.of(1L));
+        when(purchaseRepository.findById(1L)).thenReturn(Optional.of(existing));
+
+        service.deletePurchase(1L);
+
+        verify(purchaseRepository).delete(existing);
+        verify(productClient, never()).restoreStock(any(), any());
+        verify(productClient, never()).reduceStock(any(), any());
     }
 
     @Test

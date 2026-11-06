@@ -113,29 +113,40 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional
     public void reduceStock(Long productId, Integer quantity) {
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new ProductNotFoundException(productId));
+        requirePositiveQuantity(quantity);
 
-        if (product.getStock() < quantity) {
+        // UPDATE ... WHERE stock >= quantity: la comprobación y el descuento ocurren
+        // en una sola operación atómica, así dos reservas concurrentes no pueden
+        // leer el mismo stock y dejarlo en negativo.
+        int updated = productRepository.decreaseStock(productId, quantity);
+        if (updated == 0) {
+            Product product = productRepository.findById(productId)
+                    .orElseThrow(() -> new ProductNotFoundException(productId));
             throw new IllegalArgumentException(
                     "Stock insuficiente para el producto: " + product.getName()
             );
         }
 
-        product.setStock(product.getStock() - quantity);
-        productRepository.save(product);
         log.info("Stock reducido en {} unidades para producto id: {}", quantity, productId);
     }
 
     @Override
     @Transactional
     public void restoreStock(Long productId, Integer quantity) {
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new ProductNotFoundException(productId));
+        requirePositiveQuantity(quantity);
 
-        product.setStock(product.getStock() + quantity);
-        productRepository.save(product);
+        int updated = productRepository.increaseStock(productId, quantity);
+        if (updated == 0) {
+            throw new ProductNotFoundException(productId);
+        }
+
         log.info("Stock restaurado en {} unidades para producto id: {}", quantity, productId);
+    }
+
+    private void requirePositiveQuantity(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException("La cantidad debe ser mayor a cero");
+        }
     }
 
     @Override
